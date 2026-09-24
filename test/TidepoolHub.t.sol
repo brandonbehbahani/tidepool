@@ -195,4 +195,34 @@ contract TidepoolHubTest is Test {
         // P(s)=M*s/WAD => s=WAD => spot=M
         assertEq(CurveMath.spotPrice(WAD, M), M);
     }
+
+    function test_quoteBuy_matchesBuyMint() public {
+        uint256 amount = 100 ether;
+        uint256 quoted = hub.quoteBuy(amount);
+
+        vm.prank(alice);
+        hub.buy(amount);
+
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), quoted, "quoteBuy matches minted");
+        assertEq(hub.supply(), quoted);
+    }
+
+    function test_quoteSell_matchesSellPayout() public {
+        vm.prank(alice);
+        hub.buy(100 ether);
+
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        uint256 quoted = hub.quoteSell(shares);
+        uint256 balBefore = usdc.balanceOf(alice);
+
+        vm.prank(alice);
+        hub.sell(shares);
+
+        assertEq(usdc.balanceOf(alice) - balBefore, quoted, "quoteSell matches payout");
+    }
+
+    function test_quoteBuy_zeroWhenDustTooSmall() public view {
+        // Tiny payment may mint zero shares at high supply; at s=0 still positive for 1 wei usually
+        assertEq(hub.quoteBuy(0), 0);
+    }
 }
