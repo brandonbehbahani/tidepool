@@ -290,4 +290,40 @@ contract TidepoolHubTest is Test {
         emit Bought(alice, amount, expectedShares, expectedShares);
         hub.buy(amount);
     }
+
+    function test_sell_revertsWhenDustPaysZero() public {
+        // After a normal buy, selling 1 share rounds GrossRefund to 0; CEI sell must revert with no burn.
+        vm.prank(alice);
+        hub.buy(1 ether);
+        assertEq(hub.quoteSell(1), 0, "1 share quotes zero USDC");
+
+        uint256 aliceShares = hub.balanceOf(alice, hub.POOL_ID());
+        uint256 aliceUsdc = usdc.balanceOf(alice);
+        uint256 hubUsdc = usdc.balanceOf(address(hub));
+        uint256 supplyBefore = hub.supply();
+        uint256 reserveBefore = hub.reserve();
+
+        vm.prank(alice);
+        vm.expectRevert(TidepoolHub.ZeroAmount.selector);
+        hub.sell(1);
+
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), aliceShares, "shares unchanged");
+        assertEq(usdc.balanceOf(alice), aliceUsdc, "seller USDC unchanged");
+        assertEq(usdc.balanceOf(address(hub)), hubUsdc, "hub USDC unchanged");
+        assertEq(hub.supply(), supplyBefore, "supply unchanged");
+        assertEq(hub.reserve(), reserveBefore, "reserve unchanged");
+    }
+
+    function test_sell_emitsSold() public {
+        vm.prank(alice);
+        hub.buy(25 ether);
+
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        uint256 expectedOut = hub.quoteSell(shares);
+
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, true, address(hub));
+        emit Sold(alice, shares, expectedOut, 0);
+        hub.sell(shares);
+    }
 }

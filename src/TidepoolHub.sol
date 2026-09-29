@@ -65,11 +65,15 @@ contract TidepoolHub is ERC1155, ReentrancyGuard {
         emit Bought(msg.sender, usdcAmount, ds, supply);
     }
 
+    /// @notice Burn shares for reserve-capped USDC refund (GrossRefund, min reserve).
+    /// @dev CEI: compute `paid` before burn/transfer; dust sells that pay 0 revert without burning.
     function sell(uint256 shares) external nonReentrant {
         if (shares == 0) revert ZeroAmount();
         if (balanceOf(msg.sender, POOL_ID) < shares) revert InsufficientShares();
+        // CEI: compute payout before burn so a dust sell that pays 0 does not destroy shares
         uint256 gross = CurveMath.sellRefund(supply, shares, M);
         uint256 paid = gross > reserve ? reserve : gross;
+        if (paid == 0) revert ZeroAmount();
         supply -= shares;
         reserve -= paid;
         _burn(msg.sender, POOL_ID, shares);
