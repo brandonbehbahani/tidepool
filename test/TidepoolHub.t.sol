@@ -377,4 +377,43 @@ contract TidepoolHubTest is Test {
         assertEq(hub.supply(), 0, "supply zero after full sell");
         assertEq(hub.balanceOf(alice, hub.POOL_ID()), 0, "shares burned");
     }
+
+    function test_transfer_recipientSellsAndSenderCannot() public {
+        // ERC-1155 transfer moves the claim, not the curve: supply/reserve stay put,
+        // the recipient can sell, and the sender cannot sell the transferred shares.
+        vm.prank(alice);
+        hub.buy(100 ether);
+
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        uint256 half = shares / 2;
+        assertGt(half, 0, "partial size");
+        uint256 reserveBefore = hub.reserve();
+        uint256 poolId = hub.POOL_ID();
+
+        // Cache poolId first: an external call in the argument list would consume vm.prank.
+        vm.prank(alice);
+        hub.safeTransferFrom(alice, bob, poolId, half, "");
+
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), shares - half, "sender remainder");
+        assertEq(hub.balanceOf(bob, hub.POOL_ID()), half, "recipient balance");
+        assertEq(hub.supply(), shares, "transfer does not change supply");
+        assertEq(hub.reserve(), reserveBefore, "transfer does not change reserve");
+
+        vm.prank(alice);
+        vm.expectRevert(TidepoolHub.InsufficientShares.selector);
+        hub.sell((shares - half) + 1);
+
+        uint256 quoted = hub.quoteSell(half);
+        uint256 bobBefore = usdc.balanceOf(bob);
+
+        vm.prank(bob);
+        hub.sell(half);
+
+        assertEq(usdc.balanceOf(bob) - bobBefore, quoted, "recipient paid quoteSell");
+        assertEq(hub.balanceOf(bob, hub.POOL_ID()), 0, "recipient shares burned");
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), shares - half, "sender remainder intact");
+        assertEq(hub.supply(), shares - half, "supply tracks unsold shares");
+        assertEq(hub.reserve(), reserveBefore - quoted, "reserve reduced by payout");
+        assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "USDC balance matches reserve");
+    }
 }
