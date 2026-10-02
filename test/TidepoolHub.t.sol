@@ -416,4 +416,49 @@ contract TidepoolHubTest is Test {
         assertEq(hub.reserve(), reserveBefore - quoted, "reserve reduced by payout");
         assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "USDC balance matches reserve");
     }
+
+    function test_twoBuyers_oneSells_otherRemainsIntact() public {
+        // Independent holders share the curve: one seller must not touch the other's balance,
+        // and remaining supply/reserve must still match quoteSell for the survivor.
+        vm.prank(alice);
+        hub.buy(80 ether);
+        uint256 aliceShares = hub.balanceOf(alice, hub.POOL_ID());
+        assertGt(aliceShares, 0, "alice minted");
+
+        vm.prank(bob);
+        hub.buy(40 ether);
+        uint256 bobShares = hub.balanceOf(bob, hub.POOL_ID());
+        assertGt(bobShares, 0, "bob minted");
+
+        uint256 supplyBefore = hub.supply();
+        uint256 reserveBefore = hub.reserve();
+        assertEq(supplyBefore, aliceShares + bobShares, "supply is sum of holders");
+        assertEq(usdc.balanceOf(address(hub)), reserveBefore, "USDC matches reserve");
+
+        uint256 quotedAlice = hub.quoteSell(aliceShares);
+        assertGt(quotedAlice, 0, "alice sell pays nonzero");
+        uint256 aliceUsdcBefore = usdc.balanceOf(alice);
+
+        vm.prank(alice);
+        hub.sell(aliceShares);
+
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), 0, "alice burned");
+        assertEq(hub.balanceOf(bob, hub.POOL_ID()), bobShares, "bob untouched");
+        assertEq(usdc.balanceOf(alice) - aliceUsdcBefore, quotedAlice, "alice paid quoteSell");
+        assertEq(hub.supply(), bobShares, "supply is bob only");
+        assertEq(hub.reserve(), reserveBefore - quotedAlice, "reserve reduced by alice payout");
+        assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "USDC still matches reserve");
+
+        uint256 quotedBob = hub.quoteSell(bobShares);
+        uint256 bobUsdcBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        hub.sell(bobShares);
+
+        assertEq(usdc.balanceOf(bob) - bobUsdcBefore, quotedBob, "bob paid quoteSell");
+        assertEq(hub.balanceOf(bob, hub.POOL_ID()), 0, "bob burned");
+        assertEq(hub.supply(), 0, "supply drained");
+        assertEq(hub.reserve(), reserveBefore - quotedAlice - quotedBob, "reserve after both sells");
+        assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "final USDC matches reserve");
+    }
+
 }
