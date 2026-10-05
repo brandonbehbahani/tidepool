@@ -461,4 +461,34 @@ contract TidepoolHubTest is Test {
         assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "final USDC matches reserve");
     }
 
+    function testFuzz_buyThenSellAll_neverProfits(uint256 amount) public {
+        // Solvency/rounding invariant: a lone buy-then-sell-all round trip can never pay out
+        // more USDC than was paid in, and the hub's USDC balance always equals `reserve`.
+        amount = bound(amount, 1, 1_000_000 ether);
+        uint256 quotedShares = hub.quoteBuy(amount);
+        vm.assume(quotedShares > 0);
+
+        uint256 aliceStart = usdc.balanceOf(alice);
+        vm.prank(alice);
+        hub.buy(amount);
+
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        assertEq(shares, quotedShares, "minted == quoteBuy");
+        assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "USDC matches reserve after buy");
+
+        uint256 quotedOut = hub.quoteSell(shares);
+        assertLe(quotedOut, amount, "quoteSell never exceeds amount paid");
+        // Tiny positions can round GrossRefund to 0; sell then reverts (covered elsewhere).
+        vm.assume(quotedOut > 0);
+
+        vm.prank(alice);
+        hub.sell(shares);
+
+        assertLe(usdc.balanceOf(alice), aliceStart, "round trip never profits");
+        assertEq(aliceStart - usdc.balanceOf(alice), amount - quotedOut, "loss == rounding dust");
+        assertEq(hub.supply(), 0, "supply drained");
+        assertEq(hub.reserve(), amount - quotedOut, "dust stays in reserve");
+        assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "USDC matches reserve after sell");
+    }
+
 }
