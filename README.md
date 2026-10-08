@@ -8,13 +8,20 @@ Singleton ERC-1155 bonding-curve hub with USDC collateral.
 
 ## Setup
 
+Dependencies (`forge-std`, `openzeppelin-contracts`) are pinned as git
+submodules under `lib/`. The pinned OpenZeppelin commit (package version 5.7.0)
+needs solc `^0.8.24` and the Cancun EVM, which `foundry.toml` already sets, so
+no extra compiler flags are needed.
+
 ```bash
 # Foundry must be on PATH (e.g. ~/.foundry/bin)
-./scripts/bootstrap.sh
-# or manually:
-forge install foundry-rs/forge-std
-forge install OpenZeppelin/openzeppelin-contracts@v5.0.2
+git clone --recursive https://github.com/brandonbehbahani/tidepool.git
+# or, in an existing clone (a plain clone leaves lib/ empty):
+git submodule update --init --recursive
 ```
+
+Do not `forge install` OpenZeppelin v5.0.2; that older release does not match
+the pinned submodule.
 
 ## Test
 
