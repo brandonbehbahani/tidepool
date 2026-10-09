@@ -8,12 +8,8 @@ if ! command -v forge >/dev/null 2>&1; then
   exit 1
 fi
 
-# Install deps if missing (idempotent-ish: forge install skips/updates as needed)
-if [[ ! -d lib/forge-std ]]; then
-  forge install foundry-rs/forge-std --no-commit
-fi
-if [[ ! -d lib/openzeppelin-contracts ]]; then
-  forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-commit
-fi
+# Deps (forge-std, openzeppelin-contracts) are pinned git submodules under lib/.
+# Idempotent: no-op when already initialised.
+git submodule update --init --recursive
 
 echo "Bootstrap complete. Run: forge test -vv"
