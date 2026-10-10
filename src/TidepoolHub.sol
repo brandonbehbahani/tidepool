@@ -46,11 +46,18 @@ contract TidepoolHub is ERC1155, ReentrancyGuard {
         return gross > reserve ? reserve : gross;
     }
 
+    /// @notice Preview USDC needed to mint an exact share amount (theoretical buyCost).
+    /// @dev `buy` uses sharesForCost, which can undershoot: paying this cost may mint <= `shares`.
+    function quoteBuyShares(uint256 shares) external view returns (uint256 usdcIn) {
+        return CurveMath.buyCost(supply, shares, M);
+    }
+
     function buy(uint256 usdcAmount) external nonReentrant {
         if (usdcAmount == 0) revert ZeroAmount();
-        usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
+        // CEI: compute shares before transfer so dust that mints 0 reverts without moving USDC
         uint256 ds = CurveMath.sharesForCost(supply, usdcAmount, M);
         if (ds == 0) revert ZeroAmount();
+        usdc.safeTransferFrom(msg.sender, address(this), usdcAmount);
         // Exact cost for ds may be <= usdcAmount; keep full payment in reserve (dust stays)
         supply += ds;
         reserve += usdcAmount;

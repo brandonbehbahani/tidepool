@@ -17,6 +17,9 @@ contract TidepoolHubTest is Test {
     uint256 internal constant M = 1e15;
     uint256 internal constant WAD = 1e18;
 
+    event Bought(address indexed buyer, uint256 usdcIn, uint256 sharesOut, uint256 supplyAfter);
+    event Sold(address indexed seller, uint256 sharesIn, uint256 usdcOut, uint256 supplyAfter);
+
     function setUp() public {
         usdc = new MockUSDC();
         hub = new TidepoolHub(usdc);
@@ -224,5 +227,67 @@ contract TidepoolHubTest is Test {
     function test_quoteBuy_zeroWhenDustTooSmall() public view {
         // Tiny payment may mint zero shares at high supply; at s=0 still positive for 1 wei usually
         assertEq(hub.quoteBuy(0), 0);
+    }
+
+    function test_quoteBuyShares_matchesBuyCost() public {
+        uint256 target = 2e18;
+        assertEq(hub.quoteBuyShares(target), CurveMath.buyCost(0, target, M));
+
+        vm.prank(alice);
+        hub.buy(50 ether);
+
+        uint256 s = hub.supply();
+        uint256 target2 = 1e18;
+        assertEq(hub.quoteBuyShares(target2), CurveMath.buyCost(s, target2, M));
+    }
+
+    function test_quoteBuyShares_buyUndershootsTarget() public {
+        // buy() mints via sharesForCost; paying buyCost(s, ds) may mint <= ds (integer undershoot).
+        uint256 target = 3e18;
+        uint256 cost = hub.quoteBuyShares(target);
+        assertGt(cost, 0);
+        // Capture expected mint before state changes (quoteBuy uses current supply).
+        uint256 expectedMint = hub.quoteBuy(cost);
+        assertLe(expectedMint, target, "sharesForCost undershoots buyCost target");
+
+        vm.prank(alice);
+        hub.buy(cost);
+
+        uint256 minted = hub.balanceOf(alice, hub.POOL_ID());
+        assertEq(minted, expectedMint, "quoteBuy matches actual mint");
+        assertGt(minted, 0);
+    }
+
+    function test_buy_revertsWhenDustMintsZeroShares() public {
+        // At high supply, 1 wei USDC rounds to 0 shares; CEI buy must revert with no USDC moved.
+        usdc.mint(alice, 1e21);
+        vm.prank(alice);
+        hub.buy(6e20);
+        assertGt(hub.supply(), 1e21, "supply high enough for 1-wei dust");
+        assertEq(hub.quoteBuy(1), 0, "1 wei quotes zero shares");
+
+        uint256 aliceUsdc = usdc.balanceOf(alice);
+        uint256 hubUsdc = usdc.balanceOf(address(hub));
+        uint256 supplyBefore = hub.supply();
+        uint256 reserveBefore = hub.reserve();
+
+        vm.prank(alice);
+        vm.expectRevert(TidepoolHub.ZeroAmount.selector);
+        hub.buy(1);
+
+        assertEq(usdc.balanceOf(alice), aliceUsdc, "buyer USDC unchanged");
+        assertEq(usdc.balanceOf(address(hub)), hubUsdc, "hub USDC unchanged");
+        assertEq(hub.supply(), supplyBefore, "supply unchanged");
+        assertEq(hub.reserve(), reserveBefore, "reserve unchanged");
+    }
+
+    function test_buy_emitsBought() public {
+        uint256 amount = 25 ether;
+        uint256 expectedShares = hub.quoteBuy(amount);
+
+        vm.prank(alice);
+        vm.expectEmit(true, false, false, true, address(hub));
+        emit Bought(alice, amount, expectedShares, expectedShares);
+        hub.buy(amount);
     }
 }
