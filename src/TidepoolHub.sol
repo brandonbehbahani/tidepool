@@ -21,11 +21,10 @@ contract TidepoolHub is ERC1155, ReentrancyGuard {
 
     error ZeroAmount();
     error InsufficientShares();
+    error ZeroAddress();
 
     event Bought(address indexed buyer, uint256 usdcIn, uint256 sharesOut, uint256 supplyAfter);
     event Sold(address indexed seller, uint256 sharesIn, uint256 usdcOut, uint256 supplyAfter);
-
-    error ZeroAddress();
 
     constructor(IERC20 usdc_) ERC1155("https://tidepool.local/{id}.json") {
         if (address(usdc_) == address(0)) revert ZeroAddress();
@@ -34,6 +33,17 @@ contract TidepoolHub is ERC1155, ReentrancyGuard {
 
     function spot() external view returns (uint256) {
         return CurveMath.spotPrice(supply, M);
+    }
+
+    /// @notice Preview shares minted for a USDC payment (no state change).
+    function quoteBuy(uint256 usdcAmount) external view returns (uint256 sharesOut) {
+        return CurveMath.sharesForCost(supply, usdcAmount, M);
+    }
+
+    /// @notice Preview USDC paid for a sell, capped at current reserve.
+    function quoteSell(uint256 shares) external view returns (uint256 usdcOut) {
+        uint256 gross = CurveMath.sellRefund(supply, shares, M);
+        return gross > reserve ? reserve : gross;
     }
 
     function buy(uint256 usdcAmount) external nonReentrant {
