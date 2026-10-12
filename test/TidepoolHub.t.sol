@@ -16,6 +16,8 @@ contract TidepoolHubTest is Test {
 
     uint256 internal constant M = 1e15;
     uint256 internal constant WAD = 1e18;
+    uint256 internal constant USDC = 1e6; // one USDC in base units
+    uint256 internal constant SCALE = 1e12;
 
     event Bought(address indexed buyer, uint256 usdcIn, uint256 sharesOut, uint256 supplyAfter);
     event Sold(address indexed seller, uint256 sharesIn, uint256 usdcOut, uint256 supplyAfter);
@@ -24,8 +26,8 @@ contract TidepoolHubTest is Test {
         usdc = new MockUSDC();
         hub = new TidepoolHub(usdc);
 
-        usdc.mint(alice, 1_000_000 ether);
-        usdc.mint(bob, 1_000_000 ether);
+        usdc.mint(alice, 1_000_000 * USDC);
+        usdc.mint(bob, 1_000_000 * USDC);
 
         vm.prank(alice);
         usdc.approve(address(hub), type(uint256).max);
@@ -34,7 +36,7 @@ contract TidepoolHubTest is Test {
     }
 
     function test_buy_mintsSharesAndIncreasesReserve() public {
-        uint256 amount = 100 ether;
+        uint256 amount = 100 * USDC;
         uint256 balBefore = usdc.balanceOf(alice);
 
         vm.prank(alice);
@@ -49,14 +51,14 @@ contract TidepoolHubTest is Test {
     }
 
     function test_sell_burnsSharesAndPaysRefund() public {
-        uint256 amount = 100 ether;
+        uint256 amount = 100 * USDC;
         vm.prank(alice);
         hub.buy(amount);
 
         uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
         uint256 balBefore = usdc.balanceOf(alice);
         uint256 reserveBefore = hub.reserve();
-        uint256 gross = CurveMath.sellRefund(hub.supply(), shares, M);
+        uint256 gross = CurveMath.sellRefund(hub.supply(), shares, M) / SCALE;
         uint256 paidExpected = gross > reserveBefore ? reserveBefore : gross;
 
         vm.prank(alice);
@@ -72,12 +74,12 @@ contract TidepoolHubTest is Test {
 
     function test_reserveAccounting_buyThenPartialSell() public {
         vm.prank(alice);
-        hub.buy(50 ether);
+        hub.buy(50 * USDC);
 
         uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
         uint256 half = shares / 2;
         uint256 reserveBefore = hub.reserve();
-        uint256 expectedGross = CurveMath.sellRefund(hub.supply(), half, M);
+        uint256 expectedGross = CurveMath.sellRefund(hub.supply(), half, M) / SCALE;
         uint256 expectedPaid = expectedGross > reserveBefore ? reserveBefore : expectedGross;
 
         vm.prank(alice);
@@ -96,7 +98,7 @@ contract TidepoolHubTest is Test {
 
     function test_sell_revertsOnZeroAmount() public {
         vm.prank(alice);
-        hub.buy(10 ether);
+        hub.buy(10 * USDC);
 
         vm.prank(alice);
         vm.expectRevert(TidepoolHub.ZeroAmount.selector);
@@ -105,7 +107,7 @@ contract TidepoolHubTest is Test {
 
     function test_sell_revertsOnInsufficientShares() public {
         vm.prank(alice);
-        hub.buy(10 ether);
+        hub.buy(10 * USDC);
 
         uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
 
@@ -124,12 +126,12 @@ contract TidepoolHubTest is Test {
         assertEq(hub.spot(), 0);
 
         vm.prank(alice);
-        hub.buy(10 ether);
+        hub.buy(10 * USDC);
         uint256 spot1 = hub.spot();
         assertGt(spot1, 0);
 
         vm.prank(bob);
-        hub.buy(10 ether);
+        hub.buy(10 * USDC);
         uint256 spot2 = hub.spot();
         assertGt(spot2, spot1, "spot rises with supply");
     }
@@ -169,10 +171,10 @@ contract TidepoolHubTest is Test {
     function test_sellPaysMinGrossAndReserve() public {
         // After buy, dust can make reserve > theoretical R(s); sell of all should pay min(gross, reserve)
         vm.prank(alice);
-        hub.buy(77 ether);
+        hub.buy(77 * USDC);
 
         uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
-        uint256 gross = CurveMath.sellRefund(hub.supply(), shares, M);
+        uint256 gross = CurveMath.sellRefund(hub.supply(), shares, M) / SCALE;
         uint256 reserveBefore = hub.reserve();
         uint256 paidExpected = gross > reserveBefore ? reserveBefore : gross;
 
@@ -200,7 +202,7 @@ contract TidepoolHubTest is Test {
     }
 
     function test_quoteBuy_matchesBuyMint() public {
-        uint256 amount = 100 ether;
+        uint256 amount = 100 * USDC;
         uint256 quoted = hub.quoteBuy(amount);
 
         vm.prank(alice);
@@ -212,7 +214,7 @@ contract TidepoolHubTest is Test {
 
     function test_quoteSell_matchesSellPayout() public {
         vm.prank(alice);
-        hub.buy(100 ether);
+        hub.buy(100 * USDC);
 
         uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
         uint256 quoted = hub.quoteSell(shares);
@@ -231,14 +233,14 @@ contract TidepoolHubTest is Test {
 
     function test_quoteBuyShares_matchesBuyCost() public {
         uint256 target = 2e18;
-        assertEq(hub.quoteBuyShares(target), CurveMath.buyCost(0, target, M));
+        assertEq(hub.quoteBuyShares(target), _ceilUsdc(CurveMath.buyCost(0, target, M)));
 
         vm.prank(alice);
-        hub.buy(50 ether);
+        hub.buy(50 * USDC);
 
         uint256 s = hub.supply();
         uint256 target2 = 1e18;
-        assertEq(hub.quoteBuyShares(target2), CurveMath.buyCost(s, target2, M));
+        assertEq(hub.quoteBuyShares(target2), _ceilUsdc(CurveMath.buyCost(s, target2, M)));
     }
 
     function test_quoteBuyShares_buyUndershootsTarget() public {
@@ -259,11 +261,11 @@ contract TidepoolHubTest is Test {
     }
 
     function test_buy_revertsWhenDustMintsZeroShares() public {
-        // At high supply, 1 wei USDC rounds to 0 shares; CEI buy must revert with no USDC moved.
-        usdc.mint(alice, 1e21);
+        // At extreme supply (>1e15 shares), 1 base unit of USDC rounds to 0 shares; CEI buy must revert.
+        usdc.mint(alice, 1e33);
         vm.prank(alice);
-        hub.buy(6e20);
-        assertGt(hub.supply(), 1e21, "supply high enough for 1-wei dust");
+        hub.buy(6e32);
+        assertGt(hub.supply(), 1e33, "supply high enough for 1-unit dust");
         assertEq(hub.quoteBuy(1), 0, "1 wei quotes zero shares");
 
         uint256 aliceUsdc = usdc.balanceOf(alice);
@@ -282,7 +284,7 @@ contract TidepoolHubTest is Test {
     }
 
     function test_buy_emitsBought() public {
-        uint256 amount = 25 ether;
+        uint256 amount = 25 * USDC;
         uint256 expectedShares = hub.quoteBuy(amount);
 
         vm.prank(alice);
@@ -294,7 +296,7 @@ contract TidepoolHubTest is Test {
     function test_sell_revertsWhenDustPaysZero() public {
         // After a normal buy, selling 1 share rounds GrossRefund to 0; CEI sell must revert with no burn.
         vm.prank(alice);
-        hub.buy(1 ether);
+        hub.buy(1 * USDC);
         assertEq(hub.quoteSell(1), 0, "1 share quotes zero USDC");
 
         uint256 aliceShares = hub.balanceOf(alice, hub.POOL_ID());
@@ -316,7 +318,7 @@ contract TidepoolHubTest is Test {
 
     function test_sell_emitsSold() public {
         vm.prank(alice);
-        hub.buy(25 ether);
+        hub.buy(25 * USDC);
 
         uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
         uint256 expectedOut = hub.quoteSell(shares);
@@ -325,5 +327,118 @@ contract TidepoolHubTest is Test {
         vm.expectEmit(true, false, false, true, address(hub));
         emit Sold(alice, shares, expectedOut, 0);
         hub.sell(shares);
+    }
+
+    // ---- 6-decimal USDC at realistic amounts ----
+
+    function _ceilUsdc(uint256 wad) internal pure returns (uint256) {
+        return (wad + SCALE - 1) / SCALE;
+    }
+
+    function test_usdc6_firstShareCostsHalfAMilliDollar() public view {
+        // Before the fix the first share cost 5e14 base units (~$500M at 6 dp).
+        assertEq(hub.quoteBuyShares(1e18), 500, "first share = 500 units = $0.0005");
+        assertEq(usdc.decimals(), 6);
+    }
+
+    function test_usdc6_spotAtOneShareIsOneMilliDollar() public {
+        uint256 cost = hub.quoteBuyShares(1e18);
+        vm.prank(alice);
+        hub.buy(cost);
+        // sharesForCost may undershoot by a wei, so spot is just under $0.001 (1000 units)
+        assertApproxEqAbs(hub.spot(), 1000, 1, "spot ~= $0.001 at 1 share");
+    }
+
+    function _assertRealisticBuy(uint256 amount) internal {
+        uint256 quoted = hub.quoteBuy(amount);
+        vm.prank(alice);
+        hub.buy(amount);
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        assertEq(shares, quoted);
+        // Exact curve cost of what was minted never exceeds what was paid
+        assertLe(_ceilUsdc(CurveMath.buyCost(0, shares, M)), amount, "paid covers curve cost");
+        assertEq(hub.reserve(), amount);
+    }
+
+    function test_usdc6_buy_oneDollar() public {
+        _assertRealisticBuy(1 * USDC);
+        // $1 at s=0: ds = sqrt(2 * 1e18 * 1e36 / 1e15) ~= 44.72 shares
+        assertApproxEqRel(hub.supply(), 44.72e18, 1e15);
+    }
+
+    function test_usdc6_buy_hundredDollars() public {
+        _assertRealisticBuy(100 * USDC);
+        assertApproxEqRel(hub.supply(), 447.21e18, 1e15);
+    }
+
+    function test_usdc6_buy_tenThousandDollars() public {
+        _assertRealisticBuy(10_000 * USDC);
+        assertApproxEqRel(hub.supply(), 4472.13e18, 1e15);
+    }
+
+    function _roundTrip(uint256 amount) internal {
+        uint256 before = usdc.balanceOf(bob);
+        vm.prank(bob);
+        hub.buy(amount);
+        uint256 shares = hub.balanceOf(bob, hub.POOL_ID());
+        // A dust position whose payout rounds to 0 is rejected by sell (ZeroAmount); bob just keeps it.
+        if (hub.quoteSell(shares) > 0) {
+            vm.prank(bob);
+            hub.sell(shares);
+        }
+        assertLe(usdc.balanceOf(bob), before, "round trip never profits");
+    }
+
+    function test_usdc6_roundTrips_neverProfit() public {
+        vm.prank(alice);
+        hub.buy(500 * USDC); // existing holder so bob trades mid-curve
+        _roundTrip(1 * USDC);
+        _roundTrip(100 * USDC);
+        _roundTrip(10_000 * USDC);
+    }
+
+    function testFuzz_usdc6_roundTripNeverProfits(uint256 seed, uint256 amount) public {
+        seed = bound(seed, 0, 100_000 * USDC);
+        amount = bound(amount, 1, 100_000 * USDC);
+        if (seed > 0) {
+            vm.prank(alice);
+            hub.buy(seed);
+        }
+        _roundTrip(amount);
+    }
+
+    function _redeemableAll() internal view returns (uint256) {
+        return CurveMath.sellRefund(hub.supply(), hub.supply(), M) / SCALE;
+    }
+
+    function test_usdc6_reserveCoversAllRedeemable() public {
+        vm.prank(alice);
+        hub.buy(1 * USDC);
+        vm.prank(bob);
+        hub.buy(100 * USDC);
+        vm.prank(alice);
+        hub.buy(10_000 * USDC);
+        assertGe(hub.reserve(), _redeemableAll(), "reserve >= sum redeemable");
+
+        uint256 third = hub.balanceOf(bob, hub.POOL_ID()) / 3;
+        vm.prank(bob);
+        hub.sell(third);
+        assertGe(hub.reserve(), _redeemableAll(), "still solvent after partial sell");
+    }
+
+    function testFuzz_usdc6_reserveCoversAllRedeemable(uint256 a, uint256 b, uint256 c) public {
+        a = bound(a, 1, 100_000 * USDC);
+        b = bound(b, 1, 100_000 * USDC);
+        vm.prank(alice);
+        hub.buy(a);
+        vm.prank(bob);
+        hub.buy(b);
+        c = bound(c, 0, hub.balanceOf(alice, hub.POOL_ID()));
+        if (c > 0 && hub.quoteSell(c) > 0) {
+            vm.prank(alice);
+            hub.sell(c);
+        }
+        assertGe(hub.reserve(), _redeemableAll(), "reserve >= sum redeemable");
+        assertEq(usdc.balanceOf(address(hub)), hub.reserve());
     }
 }
