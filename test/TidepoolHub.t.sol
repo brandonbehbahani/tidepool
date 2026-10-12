@@ -225,4 +225,33 @@ contract TidepoolHubTest is Test {
         // Tiny payment may mint zero shares at high supply; at s=0 still positive for 1 wei usually
         assertEq(hub.quoteBuy(0), 0);
     }
+
+    function test_quoteBuyShares_matchesBuyCost() public {
+        uint256 target = 2e18;
+        assertEq(hub.quoteBuyShares(target), CurveMath.buyCost(0, target, M));
+
+        vm.prank(alice);
+        hub.buy(50 ether);
+
+        uint256 s = hub.supply();
+        uint256 target2 = 1e18;
+        assertEq(hub.quoteBuyShares(target2), CurveMath.buyCost(s, target2, M));
+    }
+
+    function test_quoteBuyShares_buyUndershootsTarget() public {
+        // buy() mints via sharesForCost; paying buyCost(s, ds) may mint <= ds (integer undershoot).
+        uint256 target = 3e18;
+        uint256 cost = hub.quoteBuyShares(target);
+        assertGt(cost, 0);
+        // Capture expected mint before state changes (quoteBuy uses current supply).
+        uint256 expectedMint = hub.quoteBuy(cost);
+        assertLe(expectedMint, target, "sharesForCost undershoots buyCost target");
+
+        vm.prank(alice);
+        hub.buy(cost);
+
+        uint256 minted = hub.balanceOf(alice, hub.POOL_ID());
+        assertEq(minted, expectedMint, "quoteBuy matches actual mint");
+        assertGt(minted, 0);
+    }
 }
