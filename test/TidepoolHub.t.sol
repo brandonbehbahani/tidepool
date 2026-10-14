@@ -326,4 +326,94 @@ contract TidepoolHubTest is Test {
         emit Sold(alice, shares, expectedOut, 0);
         hub.sell(shares);
     }
+
+    function test_quoteSell_zeroShares() public view {
+        assertEq(hub.quoteSell(0), 0);
+    }
+
+    function test_quoteSell_matchesPartialSellPayout() public {
+        // Invariant: quoteSell(partial) equals the USDC actually paid by sell(partial).
+        vm.prank(alice);
+        hub.buy(100 ether);
+
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        uint256 half = shares / 2;
+        assertGt(half, 0, "partial size");
+
+        uint256 quoted = hub.quoteSell(half);
+        uint256 balBefore = usdc.balanceOf(alice);
+
+        vm.prank(alice);
+        hub.sell(half);
+
+        assertEq(usdc.balanceOf(alice) - balBefore, quoted, "quoteSell matches partial sell payout");
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), shares - half, "remainder intact");
+    }
+
+    function test_quoteSell_andSell_capAtReserve() public {
+        // Force reserve below GrossRefund so quoteSell/sell take the min(gross, reserve) branch.
+        vm.prank(alice);
+        hub.buy(100 ether);
+
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        uint256 gross = CurveMath.sellRefund(hub.supply(), shares, M);
+        assertGt(gross, 1, "gross refund meaningful");
+
+        uint256 capped = gross / 2;
+        assertGt(capped, 0, "capped payout nonzero");
+        // TidepoolHub.reserve is storage slot 4 (see forge inspect storage-layout)
+        vm.store(address(hub), bytes32(uint256(4)), bytes32(capped));
+        deal(address(usdc), address(hub), capped);
+
+        assertEq(hub.reserve(), capped);
+        assertEq(hub.quoteSell(shares), capped, "quoteSell caps at reserve");
+
+        uint256 balBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        hub.sell(shares);
+
+        assertEq(usdc.balanceOf(alice) - balBefore, capped, "sell pays capped reserve");
+        assertEq(hub.reserve(), 0, "reserve drained");
+        assertEq(hub.supply(), 0, "supply zero after full sell");
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), 0, "shares burned");
+    }
+
+    function test_transfer_recipientSellsAndSenderCannot() public {
+        // ERC-1155 transfer moves the claim, not the curve: supply/reserve stay put,
+        // the recipient can sell, and the sender cannot sell the transferred shares.
+        vm.prank(alice);
+        hub.buy(100 ether);
+
+        uint256 shares = hub.balanceOf(alice, hub.POOL_ID());
+        uint256 half = shares / 2;
+        assertGt(half, 0, "partial size");
+        uint256 reserveBefore = hub.reserve();
+        uint256 poolId = hub.POOL_ID();
+
+        // Cache poolId first: an external call in the argument list would consume vm.prank.
+        vm.prank(alice);
+        hub.safeTransferFrom(alice, bob, poolId, half, "");
+
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), shares - half, "sender remainder");
+        assertEq(hub.balanceOf(bob, hub.POOL_ID()), half, "recipient balance");
+        assertEq(hub.supply(), shares, "transfer does not change supply");
+        assertEq(hub.reserve(), reserveBefore, "transfer does not change reserve");
+
+        vm.prank(alice);
+        vm.expectRevert(TidepoolHub.InsufficientShares.selector);
+        hub.sell((shares - half) + 1);
+
+        uint256 quoted = hub.quoteSell(half);
+        uint256 bobBefore = usdc.balanceOf(bob);
+
+        vm.prank(bob);
+        hub.sell(half);
+
+        assertEq(usdc.balanceOf(bob) - bobBefore, quoted, "recipient paid quoteSell");
+        assertEq(hub.balanceOf(bob, hub.POOL_ID()), 0, "recipient shares burned");
+        assertEq(hub.balanceOf(alice, hub.POOL_ID()), shares - half, "sender remainder intact");
+        assertEq(hub.supply(), shares - half, "supply tracks unsold shares");
+        assertEq(hub.reserve(), reserveBefore - quoted, "reserve reduced by payout");
+        assertEq(usdc.balanceOf(address(hub)), hub.reserve(), "USDC balance matches reserve");
+    }
 }
